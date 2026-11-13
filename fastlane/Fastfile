@@ -1,0 +1,58 @@
+# Fastlane for the AppierCrashReporter binary-distribution repo (appier/crash-reporter-ios).
+#
+# This repo holds the shipped AppierCrashReporter.xcframework plus the podspec and SPM manifest.
+# It mirrors appier/ads-aistra-ios. The build lives in the private source repo
+# (plaxieappier/appier-crash-reporter-ios); its release CI builds the signed xcframework and
+# calls `pr_crash_reporter_sdk` here. Merging that PR runs release_framework.yml (built-in token,
+# no stored secrets). `pods_crash_reporter_sdk` runs from a manual workflow in the private repo.
+#
+# Lanes:
+#   pr_crash_reporter_sdk       # open the release PR (new xcframework + version)
+#   pods_crash_reporter_sdk     # push the podspec to CocoaPods trunk (run from private CI)
+
+default_platform(:ios)
+
+platform :ios do
+  GITHUB_REPO = "appier/crash-reporter-ios".freeze
+
+  before_all do
+    setup_circle_ci if ENV["CI"]
+  end
+
+  desc "Open the release PR (commits the new AppierCrashReporter.xcframework + version)."
+  lane :pr_crash_reporter_sdk do |options|
+    branch_name = options.fetch(:branch_name, "release_crash_reporter_sdk")
+    framework_version = get_framework_version
+
+    # version_crash_reporter_sdk.json is the podspec's version source of truth.
+    File.write("../version_crash_reporter_sdk.json", { "version" => "v#{framework_version}" }.to_json)
+
+    sh "git checkout -b #{branch_name}"
+    path = ["./AppierCrashReporter.xcframework/*", "./version_crash_reporter_sdk.json"]
+    git_add(path: path)
+    git_commit(path: path, message: "Release AppierCrashReporter #{framework_version}")
+    push_to_git_remote(force: true, local_branch: branch_name, remote_branch: branch_name)
+
+    github_api(
+      server_url: "https://api.github.com",
+      api_token: ENV["GITHUB_TOKEN"],
+      http_method: "POST",
+      path: "/repos/#{GITHUB_REPO}/pulls",
+      body: { "head": branch_name, "base": "main", "title": "Release AppierCrashReporter v#{framework_version}" }
+    )
+  end
+
+  desc "Deploy the podspec to CocoaPods trunk."
+  lane :pods_crash_reporter_sdk do
+    Dir.chdir("..") do
+      sh "pod trunk push AppierCrashReporter.podspec --allow-warnings"
+    end
+  end
+
+  # Reads the shipped framework's version from the binary, so the tag, podspec and version file
+  # never drift from what was built.
+  private_lane :get_framework_version do
+    plist_file = "../AppierCrashReporter.xcframework/ios-arm64/AppierCrashReporter.framework/Info.plist"
+    sh("/usr/libexec/PlistBuddy #{plist_file} -c 'Print :CFBundleShortVersionString'").strip
+  end
+end
