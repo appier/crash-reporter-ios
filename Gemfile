@@ -9,4 +9,4 @@ gem "cocoapods", "~>1.15.0"
 # nokogiri 1.13.x ships no precompiled gem for current arm64-darwin / Ruby 3.2
 # CI runners and fails to build from source there; use a modern line that has
 # precompiled binaries for both arm64-darwin and x86_64-linux.
-gem "nokogiri", "~>1.18"
+gem "nokogiri", "~>1.19"
