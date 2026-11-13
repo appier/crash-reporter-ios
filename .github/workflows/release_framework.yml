@@ -1,0 +1,52 @@
+# Runs when a release PR is merged into main (head branch release-* / prerelease-*): cuts the
+# GitHub release, a plain semver tag <version> (e.g. 1.0.0) plus a zipped
+# AppierCrashReporter.xcframework asset. Plain semver so SPM resolves it; the podspec and the
+# direct download share the tag. Mirrors appier/ads-aistra-ios.
+#
+# This repo stores NO secrets: the release uses the built-in GITHUB_TOKEN. The CocoaPods trunk
+# push runs from the private source repo (iOS_deploy_pod.yml).
+name: Release framework
+
+on:
+  pull_request:
+    types:
+      - closed
+    branches:
+      - 'main'
+
+permissions:
+  contents: write
+
+jobs:
+  release_framework:
+    if: >-
+      (startsWith(github.head_ref, 'release') || startsWith(github.head_ref, 'prerelease'))
+        && github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: GitHub release
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        set -euo pipefail
+        version="$(jq -r '.version' version_crash_reporter_sdk.json | sed 's/^v//')"
+        tag="${version}"
+        zip -qr AppierCrashReporterFramework.zip AppierCrashReporter.xcframework
+        if gh release view "$tag" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+          echo "Release ${tag} exists — refreshing asset."
+          gh release upload "$tag" AppierCrashReporterFramework.zip --repo "${GITHUB_REPOSITORY}" --clobber
+        else
+          # A development build (1.2.3-dev.1) is a GitHub prerelease, never the latest release.
+          prerelease=()
+          if [[ "$version" == *-* ]]; then prerelease=(--prerelease); fi
+          gh release create "$tag" AppierCrashReporterFramework.zip \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "AppierCrashReporter iOS ${version}" \
+            --notes "" \
+            --target main \
+            ${prerelease[@]+"${prerelease[@]}"}
+        fi
+        echo "Released ${tag}"
